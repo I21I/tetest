@@ -20,15 +20,19 @@ namespace VRCFaceController
         private int selectedTab = 0;
         private readonly string[] tabNames = { "パラメータエディタ", "アニメーション置換", "設定" };
 
-        // F_set関連
+        // パラメータ関連
         private List<string> availableParameters = new List<string>();
         private string selectedParameter = "";
         private Dictionary<string, float> parameterValues = new Dictionary<string, float>();
         
-        // 選択中の値（デフォルトはF_set 0/1/2/3）
-        private int[] selectedValues = new int[] { 0, 1, 2, 3 };
-        private string[] valueLabels = new string[] { "値=0", "値=1", "値=2", "値=3" };
+        // 選択中の値
+        private List<int> selectedValues = new List<int>() { 0, 1, 2, 3 };
+        private List<string> valueLabels = new List<string>() { "値=0", "値=1", "値=2", "値=3" };
         private int currentValueIndex = 0;
+
+        // レイヤー選択
+        private string[] layerNames = new string[0];
+        private int selectedLayerIndex = -1;
 
         // ハンドジェスチャー名
         private static readonly string[] GestureNames = new string[] {
@@ -45,6 +49,10 @@ namespace VRCFaceController
         private string outputFolder = "Assets/VRCFaceController/Export";
         private string outputPrefix = "VRC_";
         private bool copyController = true;
+        
+        // 表示オプション
+        private bool showNeutralGesture = false; // ニュートラル（0）ジェスチャーを表示するかどうか
+        private float gestureDisplayHeight = 600f; // ジェスチャー表示領域の高さ
         
         // スタイル
         private GUIStyle headerStyle;
@@ -157,10 +165,19 @@ namespace VRCFaceController
                 return;
             }
 
-            // デバッグ情報の表示
+            // デバッグ情報の印字
             if (showDebugInfo)
             {
-                EditorGUILayout.HelpBox(debugMessage, MessageType.Info);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("デバッグ情報", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"選択中パラメータ: {selectedParameter}");
+                EditorGUILayout.LabelField($"選択中値インデックス: {currentValueIndex}");
+                if (selectedValues.Count > 0 && currentValueIndex < selectedValues.Count)
+                {
+                    EditorGUILayout.LabelField($"選択中値: {selectedValues[currentValueIndex]}");
+                }
+                EditorGUILayout.LabelField($"値のリスト: {string.Join(", ", selectedValues)}");
+                EditorGUILayout.EndVertical();
             }
 
             // タブ切り替え
@@ -207,49 +224,100 @@ namespace VRCFaceController
             
             EditorGUILayout.LabelField("パラメータ選択", EditorStyles.boldLabel);
             
+            // 表示オプション
+            EditorGUILayout.BeginHorizontal();
+            showNeutralGesture = EditorGUILayout.Toggle("ニュートラル表情を表示", showNeutralGesture);
+            EditorGUILayout.EndHorizontal();
+            
+            // レイヤー選択
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("レイヤー:", GUILayout.Width(70));
+            
+            // レイヤー選択用のオプション配列を作成（「すべて」を追加）
+            string[] layerOptions = new string[layerNames.Length + 1];
+            layerOptions[0] = "すべて";
+            for (int i = 0; i < layerNames.Length; i++)
+            {
+                layerOptions[i + 1] = layerNames[i];
+            }
+            
+            int displayLayerIndex = selectedLayerIndex + 1; // -1 → 0 (すべて)
+            
+            EditorGUI.BeginChangeCheck();
+            displayLayerIndex = EditorGUILayout.Popup(displayLayerIndex, layerOptions, GUILayout.Width(200));
+            if (EditorGUI.EndChangeCheck())
+            {
+                // 表示インデックスから内部インデックスに変換
+                selectedLayerIndex = displayLayerIndex - 1;
+                // レイヤーが変更されたら再解析
+                AnalyzeController();
+            }
+            EditorGUILayout.EndHorizontal();
+            
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("コントロールパラメータ:", GUILayout.Width(130));
             
-            if (availableParameters.Count > 0)
+            // 「なし」を含むパラメータリストを作成
+            List<string> paramOptions = new List<string>();
+            paramOptions.Add("なし");
+            paramOptions.AddRange(availableParameters);
+            
+            // 現在の選択を取得
+            int paramIndex = string.IsNullOrEmpty(selectedParameter) ? 0 : paramOptions.IndexOf(selectedParameter);
+            if (paramIndex < 0) paramIndex = 0;
+            
+            EditorGUI.BeginChangeCheck();
+            paramIndex = EditorGUILayout.Popup(paramIndex, paramOptions.ToArray(), GUILayout.Width(150));
+            if (EditorGUI.EndChangeCheck())
             {
-                int paramIndex = availableParameters.IndexOf(selectedParameter);
-                if (paramIndex < 0)
-                {
-                    paramIndex = 0;
-                    selectedParameter = availableParameters[0];
-                }
+                selectedParameter = paramIndex == 0 ? "" : paramOptions[paramIndex];
                 
-                EditorGUI.BeginChangeCheck();
-                paramIndex = EditorGUILayout.Popup(paramIndex, availableParameters.ToArray(), GUILayout.Width(150));
-                if (EditorGUI.EndChangeCheck() && paramIndex >= 0 && paramIndex < availableParameters.Count)
-                {
-                    selectedParameter = availableParameters[paramIndex];
-                    
-                    // 選択パラメータ変更時に値の設定を更新
-                    UpdateParameterValueOptions();
-                    
-                    // 再解析
-                    AnalyzeController();
-                }
+                // 選択パラメータ変更時に値の設定を更新
+                UpdateParameterValueOptions();
                 
+                // 再解析
+                AnalyzeController();
+            }
+            
+            // パラメータが選択されている場合のみ値を表示
+            if (!string.IsNullOrEmpty(selectedParameter))
+            {
                 // 値の選択
                 EditorGUILayout.LabelField("値:", GUILayout.Width(30));
                 EditorGUI.BeginChangeCheck();
-                currentValueIndex = EditorGUILayout.Popup(currentValueIndex, valueLabels, GUILayout.Width(150));
-                if (EditorGUI.EndChangeCheck())
+                if (valueLabels.Count > 0)
                 {
-                    // 再解析
-                    AnalyzeController();
+                    currentValueIndex = EditorGUILayout.Popup(currentValueIndex, valueLabels.ToArray(), GUILayout.Width(150));
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        // 再解析
+                        AnalyzeController();
+                    }
                 }
-            }
-            else
-            {
-                EditorGUILayout.LabelField("パラメータが見つかりませんでした", GUILayout.Width(200));
+                else
+                {
+                    EditorGUILayout.LabelField("値が見つかりません", GUILayout.Width(150));
+                }
             }
             
             EditorGUILayout.EndHorizontal();
             
             EditorGUILayout.EndVertical();
+            
+            // デバッグ情報の印字
+            if (showDebugInfo)
+            {
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("デバッグ情報", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"選択中パラメータ: {selectedParameter}");
+                EditorGUILayout.LabelField($"選択中値インデックス: {currentValueIndex}");
+                if (selectedValues.Count > 0 && currentValueIndex < selectedValues.Count)
+                {
+                    EditorGUILayout.LabelField($"選択中値: {selectedValues[currentValueIndex]}");
+                }
+                EditorGUILayout.LabelField($"値のリスト: {string.Join(", ", selectedValues)}");
+                EditorGUILayout.EndVertical();
+            }
             
             DrawThinSeparator();
             
@@ -258,7 +326,7 @@ namespace VRCFaceController
             // 左側 - 左手ジェスチャー
             EditorGUILayout.BeginVertical(EditorStyles.helpBox, GUILayout.Width(Screen.width/2 - 20));
             GUILayout.Label("左手ジェスチャー (GestureLeft)", headerStyle);
-            leftScrollPosition = EditorGUILayout.BeginScrollView(leftScrollPosition, GUILayout.Height(400));
+            leftScrollPosition = EditorGUILayout.BeginScrollView(leftScrollPosition, GUILayout.Height(gestureDisplayHeight));
             DrawGestureSection("GestureLeft");
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
@@ -266,7 +334,7 @@ namespace VRCFaceController
             // 右側 - 右手ジェスチャー
             EditorGUILayout.BeginVertical(EditorStyles.helpBox, GUILayout.Width(Screen.width/2 - 20));
             GUILayout.Label("右手ジェスチャー (GestureRight)", headerStyle);
-            rightScrollPosition = EditorGUILayout.BeginScrollView(rightScrollPosition, GUILayout.Height(400));
+            rightScrollPosition = EditorGUILayout.BeginScrollView(rightScrollPosition, GUILayout.Height(gestureDisplayHeight));
             DrawGestureSection("GestureRight");
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
@@ -292,11 +360,11 @@ namespace VRCFaceController
             {
                 if (targetController != null)
                 {
-                    EditorGUILayout.HelpBox("パラメータが見つかりませんでした。ステート名にGestureLeftまたはGestureRightと値(0-7)が含まれているか確認してください。", MessageType.Info);
+                    EditorGUILayout.HelpBox("パラメータが見つかりませんでした。", MessageType.Info);
                     
-                    if (GUILayout.Button("手動でジェスチャーステートを検索"))
+                    if (GUILayout.Button("トランジションからジェスチャーステートを検索"))
                     {
-                        ManualSearchGestureStates(gestureType);
+                        DetectGestureTransitions(gestureType);
                     }
                 }
                 return;
@@ -304,8 +372,35 @@ namespace VRCFaceController
             
             var stateList = gestureParameterMap[gestureType];
             
-            for (int gestureValue = 0; gestureValue < 8; gestureValue++)
+            // ジェスチャー値ごとに表示を分割
+            // ニュートラル（0）を表示するかどうかはオプションによる
+            int startGesture = showNeutralGesture ? 0 : 1;
+            
+            Dictionary<int, List<ParameterDriverState>> groupedByGesture = new Dictionary<int, List<ParameterDriverState>>();
+            
+            // ジェスチャー値ごとにグループ化
+            for (int i = 0; i < 8; i++)
             {
+                groupedByGesture[i] = new List<ParameterDriverState>();
+            }
+            
+            foreach (var state in stateList)
+            {
+                if (state.gestureValue >= 0 && state.gestureValue < 8)
+                {
+                    groupedByGesture[state.gestureValue].Add(state);
+                }
+            }
+            
+            // ジェスチャー値ごとに表示
+            for (int gestureValue = startGesture; gestureValue < 8; gestureValue++)
+            {
+                var filteredParams = groupedByGesture[gestureValue];
+                if (filteredParams.Count == 0)
+                {
+                    continue;
+                }
+                
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
                 
                 // ジェスチャー名
@@ -313,30 +408,28 @@ namespace VRCFaceController
                 GUILayout.Label($"{gestureValue}: {GestureNames[gestureValue]}", EditorStyles.boldLabel);
                 EditorGUILayout.EndHorizontal();
                 
-                // このジェスチャーのパラメータリスト
-                var gestureParams = stateList.Where(s => s.gestureValue == gestureValue).ToList();
-                
-                if (gestureParams.Count == 0)
+                // パラメータの追加ボタン
+                if (GUILayout.Button("パラメータを追加", EditorStyles.miniButton))
                 {
-                    EditorGUILayout.LabelField("   パラメータが設定されていません");
-                    
-                    if (GUILayout.Button("パラメータを追加", EditorStyles.miniButton))
+                    ShowAddParameterMenu(gestureType, gestureValue);
+                }
+                
+                // パラメータリストを統合して表示
+                // パラメータ名でグループ化（同じパラメータを複数回表示しない）
+                var distinctParams = new Dictionary<string, ParameterDriverState>();
+                
+                foreach (var paramState in filteredParams)
+                {
+                    if (!distinctParams.ContainsKey(paramState.parameterName))
                     {
-                        ManualAddParameterMenu(gestureType, gestureValue);
+                        distinctParams[paramState.parameterName] = paramState;
                     }
                 }
-                else
+                
+                // 各パラメータを表示
+                foreach (var paramState in distinctParams.Values)
                 {
-                    // パラメータの追加ボタン
-                    if (GUILayout.Button("パラメータを追加", EditorStyles.miniButton))
-                    {
-                        ShowAddParameterMenu(gestureType, gestureValue);
-                    }
-                    
-                    foreach (var paramState in gestureParams)
-                    {
-                        DrawParameterToggle(paramState);
-                    }
+                    DrawParameterToggle(paramState);
                 }
                 
                 EditorGUILayout.EndVertical();
@@ -344,7 +437,7 @@ namespace VRCFaceController
             }
         }
         
-        private void ManualSearchGestureStates(string gestureType)
+        private void DetectGestureTransitions(string gestureType)
         {
             int foundCount = 0;
             
@@ -352,124 +445,118 @@ namespace VRCFaceController
             {
                 if (layer.stateMachine != null)
                 {
-                    foundCount += SearchAllGestureStates(layer.stateMachine, layer.name, gestureType);
+                    foundCount += ExtensiveSearchForGestureTransitions(layer.stateMachine, layer.name, gestureType);
                 }
             }
             
             if (foundCount > 0)
             {
-                EditorUtility.DisplayDialog("検索完了", $"{foundCount}個のジェスチャーステートを見つけました。", "OK");
+                EditorUtility.DisplayDialog("検索完了", $"{foundCount}個のパラメータを見つけました。", "OK");
             }
             else
             {
                 EditorUtility.DisplayDialog("検索結果", $"{gestureType}のステートが見つかりませんでした。", "OK");
             }
         }
-        
-        private int SearchAllGestureStates(AnimatorStateMachine stateMachine, string path, string gestureType)
+
+        private int ExtensiveSearchForGestureTransitions(AnimatorStateMachine stateMachine, string layerPath, string gestureType)
         {
             int foundCount = 0;
+            Dictionary<int, List<AnimatorState>> gestureValueToStatesMap = new Dictionary<int, List<AnimatorState>>();
             
-            // すべてのステートを検索
-            foreach (var childState in stateMachine.states)
+            // 0～7のすべてのジェスチャー値に対して空のリストを初期化
+            for (int i = 0; i < 8; i++)
             {
-                string statePath = $"{path}/{childState.state.name}";
-                string statePathLower = statePath.ToLower();
-                
-                bool isTargetGesture = false;
+                gestureValueToStatesMap[i] = new List<AnimatorState>();
+            }
+            
+            // AnyStateからの遷移を検索（優先）
+            foreach (var transition in stateMachine.anyStateTransitions)
+            {
+                bool hasGestureCondition = false;
                 int gestureValue = -1;
                 
-                // ジェスチャータイプと値を検出
-                if (gestureType == "GestureLeft" && 
-                    (statePathLower.Contains("gestureleft") || 
-                     statePathLower.Contains("gesture_left") || 
-                     statePathLower.Contains("left_gesture") ||
-                     statePathLower.Contains("fist_l") || 
-                     statePathLower.Contains("peace_l")))
+                foreach (var condition in transition.conditions)
                 {
-                    isTargetGesture = true;
-                    
-                    // 値を検出
-                    for (int i = 0; i < 8; i++)
+                    if (condition.parameter == gestureType)
                     {
-                        if (statePathLower.Contains($"{i}") || 
-                            statePathLower.Contains($"={i}") || 
-                            statePathLower.Contains($".{i}"))
-                        {
-                            gestureValue = i;
-                            break;
-                        }
-                    }
-                    
-                    // 特定の名前パターンで値を検出
-                    if (gestureValue < 0)
-                    {
-                        if (statePathLower.Contains("fist") || statePathLower.Contains("grip"))
-                            gestureValue = 1;
-                        else if (statePathLower.Contains("point"))
-                            gestureValue = 2; 
-                        else if (statePathLower.Contains("peace"))
-                            gestureValue = 3;
-                        else if (statePathLower.Contains("open") || statePathLower.Contains("palm"))
-                            gestureValue = 4;
-                        else if (statePathLower.Contains("rock"))
-                            gestureValue = 5;
-                        else if (statePathLower.Contains("thumbsup") || statePathLower.Contains("ok"))
-                            gestureValue = 6;
-                        else if (statePathLower.Contains("gun"))
-                            gestureValue = 7;
-                        else
-                            gestureValue = 0; // デフォルト
-                    }
-                }
-                else if (gestureType == "GestureRight" && 
-                         (statePathLower.Contains("gestureright") || 
-                          statePathLower.Contains("gesture_right") || 
-                          statePathLower.Contains("right_gesture") ||
-                          statePathLower.Contains("fist_r") || 
-                          statePathLower.Contains("peace_r")))
-                {
-                    isTargetGesture = true;
-                    
-                    // 値を検出
-                    for (int i = 0; i < 8; i++)
-                    {
-                        if (statePathLower.Contains($"{i}") || 
-                            statePathLower.Contains($"={i}") || 
-                            statePathLower.Contains($".{i}"))
-                        {
-                            gestureValue = i;
-                            break;
-                        }
-                    }
-                    
-                    // 特定の名前パターンで値を検出
-                    if (gestureValue < 0)
-                    {
-                        if (statePathLower.Contains("fist") || statePathLower.Contains("grip"))
-                            gestureValue = 1;
-                        else if (statePathLower.Contains("point"))
-                            gestureValue = 2; 
-                        else if (statePathLower.Contains("peace"))
-                            gestureValue = 3;
-                        else if (statePathLower.Contains("open") || statePathLower.Contains("palm"))
-                            gestureValue = 4;
-                        else if (statePathLower.Contains("rock"))
-                            gestureValue = 5;
-                        else if (statePathLower.Contains("thumbsup") || statePathLower.Contains("ok"))
-                            gestureValue = 6;
-                        else if (statePathLower.Contains("gun"))
-                            gestureValue = 7;
-                        else
-                            gestureValue = 0; // デフォルト
+                        hasGestureCondition = true;
+                        gestureValue = Mathf.RoundToInt(condition.threshold);
+                        break;
                     }
                 }
                 
-                if (isTargetGesture && gestureValue >= 0)
+                if (hasGestureCondition && gestureValue >= 0 && gestureValue <= 7 && transition.destinationState != null)
                 {
-                    // VRC Avatar Parameter Driverの検出
+                    gestureValueToStatesMap[gestureValue].Add(transition.destinationState);
+                }
+            }
+            
+            // エントリーステートからの遷移を検索
+            if (stateMachine.defaultState != null)
+            {
+                foreach (var transition in stateMachine.defaultState.transitions)
+                {
+                    bool hasGestureCondition = false;
+                    int gestureValue = -1;
+                    
+                    foreach (var condition in transition.conditions)
+                    {
+                        if (condition.parameter == gestureType)
+                        {
+                            hasGestureCondition = true;
+                            gestureValue = Mathf.RoundToInt(condition.threshold);
+                            break;
+                        }
+                    }
+                    
+                    if (hasGestureCondition && gestureValue >= 0 && gestureValue <= 7 && transition.destinationState != null)
+                    {
+                        if (!gestureValueToStatesMap[gestureValue].Contains(transition.destinationState))
+                        {
+                            gestureValueToStatesMap[gestureValue].Add(transition.destinationState);
+                        }
+                    }
+                }
+            }
+            
+            // その他のステートからの遷移も検索
+            foreach (var childState in stateMachine.states)
+            {
+                foreach (var transition in childState.state.transitions)
+                {
+                    bool hasGestureCondition = false;
+                    int gestureValue = -1;
+                    
+                    foreach (var condition in transition.conditions)
+                    {
+                        if (condition.parameter == gestureType)
+                        {
+                            hasGestureCondition = true;
+                            gestureValue = Mathf.RoundToInt(condition.threshold);
+                            break;
+                        }
+                    }
+                    
+                    if (hasGestureCondition && gestureValue >= 0 && gestureValue <= 7 && transition.destinationState != null)
+                    {
+                        if (!gestureValueToStatesMap[gestureValue].Contains(transition.destinationState))
+                        {
+                            gestureValueToStatesMap[gestureValue].Add(transition.destinationState);
+                        }
+                    }
+                }
+            }
+            
+            // 見つかったすべてのステートでVRC Avatar Parameter Driverを検索
+            for (int gestureValue = 0; gestureValue < 8; gestureValue++)
+            {
+                foreach (var state in gestureValueToStatesMap[gestureValue])
+                {
+                    string statePath = $"{layerPath}/{state.name}";
+                    
                     bool hasParamDriver = false;
-                    foreach (var behaviour in childState.state.behaviours)
+                    foreach (var behaviour in state.behaviours)
                     {
                         if (behaviour == null)
                             continue;
@@ -491,11 +578,12 @@ namespace VRCFaceController
                                 paramState.gestureValue = gestureValue;
                                 paramState.behaviour = behaviour;
                                 
-                                // 重複を避ける
+                                // 重複を避ける（完全に同じパラメータの場合はスキップ）
                                 if (!gestureParameterMap[gestureType].Any(p => 
                                     p.gestureValue == gestureValue && 
                                     p.parameterName == paramState.parameterName &&
-                                    p.statePath == statePath))
+                                    p.statePath == statePath &&
+                                    Math.Abs(p.value - paramState.value) < 0.001f))
                                 {
                                     gestureParameterMap[gestureType].Add(paramState);
                                     foundCount++;
@@ -504,110 +592,21 @@ namespace VRCFaceController
                         }
                     }
                     
-                    // パラメータドライバーがない場合は一つだけ追加
-                    if (!hasParamDriver && availableParameters.Count > 0)
+                    if (!hasParamDriver)
                     {
-                        // 適当なパラメータを追加
-                        AddParameterToState(childState.state, availableParameters[0], 1.0f);
-                        
-                        // 再解析
-                        AnalyzeState(childState.state, statePath);
-                        foundCount++;
+                        Debug.Log($"ジェスチャー条件付きステートが見つかりましたが、パラメータドライバーがありません: {statePath} ({gestureType}={gestureValue})");
                     }
                 }
             }
             
-            // サブステートマシンの探索
+            // サブステートマシンを探索
             foreach (var childStateMachine in stateMachine.stateMachines)
             {
-                string subPath = $"{path}/{childStateMachine.stateMachine.name}";
-                foundCount += SearchAllGestureStates(childStateMachine.stateMachine, subPath, gestureType);
+                string subPath = $"{layerPath}/{childStateMachine.stateMachine.name}";
+                foundCount += ExtensiveSearchForGestureTransitions(childStateMachine.stateMachine, subPath, gestureType);
             }
             
             return foundCount;
-        }
-        
-        private void ManualAddParameterMenu(string gestureType, int gestureValue)
-        {
-            // 手動でパラメータを追加するメニュー
-            var menu = new GenericMenu();
-            
-            foreach (var paramName in availableParameters)
-            {
-                menu.AddItem(new GUIContent(paramName), false, () => {
-                    // ステートを検索または作成
-                    string statePath = FindOrCreateGestureState(gestureType, gestureValue);
-                    if (!string.IsNullOrEmpty(statePath))
-                    {
-                        AnimatorState state = FindStateByPath(statePath);
-                        if (state != null)
-                        {
-                            AddParameterToState(state, paramName, 1.0f);
-                            AnalyzeController();
-                        }
-                    }
-                });
-            }
-            
-            menu.ShowAsContext();
-        }
-        
-        private string FindOrCreateGestureState(string gestureType, int gestureValue)
-        {
-            // 既存のパスを検索
-            var existingPaths = gestureParameterMap[gestureType]
-                .Where(p => p.gestureValue == gestureValue)
-                .Select(p => p.statePath)
-                .Distinct()
-                .ToList();
-                
-            if (existingPaths.Count > 0)
-                return existingPaths[0];
-                
-            // 存在しない場合は名前ベースで検索
-            foreach (var layer in targetController.layers)
-            {
-                if (layer.stateMachine != null)
-                {
-                    string foundPath = SearchStateMachineForGesture(layer.stateMachine, layer.name, gestureType, gestureValue);
-                    if (!string.IsNullOrEmpty(foundPath))
-                        return foundPath;
-                }
-            }
-            
-            // それでも見つからない場合は、ユーザーに選択させる
-bool createLayer = EditorUtility.DisplayDialog("レイヤー選択", 
-    $"{gestureType} {gestureValue}のステートが見つかりません。" +
-    "新しいレイヤーを作成しますか？", "はい", "いいえ");
-
-if (createLayer)
-{
-    // 新しいレイヤーを作成
-    AnimatorControllerLayer newLayer = new AnimatorControllerLayer
-    {
-        name = $"{gestureType}Layer",
-        stateMachine = new AnimatorStateMachine(),
-        defaultWeight = 1.0f
-    };
-
-    // ステートマシンをアセットとして保存
-    string controllerPath = AssetDatabase.GetAssetPath(targetController);
-    string folderPath = Path.GetDirectoryName(controllerPath);
-    AssetDatabase.CreateAsset(newLayer.stateMachine, $"{folderPath}/{gestureType}StateMachine.asset");
-
-    // レイヤーを追加
-    List<AnimatorControllerLayer> layers = new List<AnimatorControllerLayer>(targetController.layers);
-    layers.Add(newLayer);
-    targetController.layers = layers.ToArray();
-
-    // ステートを作成
-    AnimatorState newState = newLayer.stateMachine.AddState($"{gestureType}{gestureValue}");
-
-    // パスを返す
-    return $"{newLayer.name}/{newState.name}";
-}
-            
-            return null;
         }
 
         private void DrawParameterToggle(ParameterDriverState paramState)
@@ -633,6 +632,12 @@ if (createLayer)
                 UpdateParameterValue(paramState, newValue);
             }
             
+            // ステートパスの表示（デバッグ用）
+            if (showDebugInfo)
+            {
+                EditorGUILayout.LabelField(paramState.statePath, GUILayout.Width(200));
+            }
+            
             EditorGUILayout.EndHorizontal();
         }
 
@@ -641,14 +646,12 @@ if (createLayer)
             // アニメーターから見つかったすべてのパラメータを表示するポップアップ
             var menu = new GenericMenu();
             
-            foreach (var paramEntry in parameterValues)
+            // コントローラ内のすべてのパラメータを取得
+            foreach (var param in targetController.parameters)
             {
-                string parameter = paramEntry.Key;
+                string parameter = param.name;
                 
-                // F_setなど制御パラメータを除外
-                if (parameter.StartsWith("F_set") || parameter.StartsWith("F_Set") || parameter == selectedParameter)
-                    continue;
-                
+                // 既に存在するパラメータかどうか
                 bool exists = gestureParameterMap[gestureType].Any(p => 
                     p.gestureValue == gestureValue && p.parameterName == parameter);
                 
@@ -674,7 +677,24 @@ if (createLayer)
             }
             
             // 対応するステートを検索
-            string targetStatePath = FindStatePathForGesture(gestureType, gestureValue);
+            var statesForGesture = gestureParameterMap[gestureType]
+                .Where(p => p.gestureValue == gestureValue)
+                .Select(p => p.statePath)
+                .Distinct()
+                .ToList();
+                
+            string targetStatePath = null;
+            
+            if (statesForGesture.Count > 0)
+            {
+                targetStatePath = statesForGesture[0];
+            }
+            else
+            {
+                // トランジションから見つける
+                targetStatePath = FindGestureStatePathFromTransitions(gestureType, gestureValue);
+            }
+            
             if (string.IsNullOrEmpty(targetStatePath))
             {
                 EditorUtility.DisplayDialog("エラー", $"{gestureType} {gestureValue}に対応するステートが見つかりませんでした。", "OK");
@@ -696,80 +716,56 @@ if (createLayer)
             AnalyzeController();
         }
 
-        private string FindStatePathForGesture(string gestureType, int gestureValue)
+        private string FindGestureStatePathFromTransitions(string gestureType, int gestureValue)
         {
-            // 現在のフィルタ条件に合うステートパスを検索
-            var existingPaths = gestureParameterMap[gestureType]
-                .Where(p => p.gestureValue == gestureValue)
-                .Select(p => p.statePath)
-                .Distinct()
-                .ToList();
-                
-            if (existingPaths.Count > 0)
-                return existingPaths[0];
-                
-            // 存在しない場合は名前ベースで検索
+            // トランジションの条件からステートを検索
             foreach (var layer in targetController.layers)
             {
+                // レイヤーフィルタリングを適用
+                if (selectedLayerIndex >= 0 && layer != targetController.layers[selectedLayerIndex])
+                    continue;
+                    
                 if (layer.stateMachine != null)
                 {
-                    string foundPath = SearchStateMachineForGesture(layer.stateMachine, layer.name, gestureType, gestureValue);
-                    if (!string.IsNullOrEmpty(foundPath))
-                        return foundPath;
-                }
-            }
-            
-            return null;
-        }
-        
-        private string SearchStateMachineForGesture(AnimatorStateMachine stateMachine, string path, string gestureType, int gestureValue)
-        {
-            // ステートの検索
-            foreach (var childState in stateMachine.states)
-            {
-                string statePath = $"{path}/{childState.state.name}";
-                string statePathLower = statePath.ToLower();
-                
-                bool isMatch = false;
-                
-                // ジェスチャータイプと値に一致するか確認
-                if (gestureType == "GestureLeft" && (statePathLower.Contains("gestureleft") || statePathLower.Contains("gesture_left")))
-                {
-                    if (statePathLower.Contains($"gestureleft{gestureValue}") || 
-                        statePathLower.Contains($"gestureleft.{gestureValue}") || 
-                        statePathLower.Contains($"gestureleft={gestureValue}") ||
-                        statePathLower.Contains($"gesture_left{gestureValue}") ||
-                        statePathLower.Contains($"left{gestureValue}"))
+                    // まずAnyStateトランジションをチェック
+                    foreach (var transition in layer.stateMachine.anyStateTransitions)
                     {
-                        isMatch = true;
+                        bool matchFound = false;
+                        
+                        foreach (var condition in transition.conditions)
+                        {
+                            if (condition.parameter == gestureType && 
+                                Mathf.RoundToInt(condition.threshold) == gestureValue)
+                            {
+                                // コントロールパラメータのフィルタリングも適用
+                                if (!string.IsNullOrEmpty(selectedParameter) && selectedValues.Length > currentValueIndex)
+                                {
+                                    bool hasMatchingCondition = false;
+                                    foreach (var c in transition.conditions)
+                                    {
+                                        if (c.parameter == selectedParameter && 
+                                            Mathf.RoundToInt(c.threshold) == selectedValues[currentValueIndex])
+                                        {
+                                            hasMatchingCondition = true;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (!hasMatchingCondition)
+                                        continue;
+                                }
+                                
+                                matchFound = true;
+                                break;
+                            }
+                        }
+                        
+                        if (matchFound && transition.destinationState != null)
+                        {
+                            return $"{layer.name}/{transition.destinationState.name}";
+                        }
                     }
                 }
-                else if (gestureType == "GestureRight" && (statePathLower.Contains("gestureright") || statePathLower.Contains("gesture_right")))
-                {
-                    if (statePathLower.Contains($"gestureright{gestureValue}") || 
-                        statePathLower.Contains($"gestureright.{gestureValue}") || 
-                        statePathLower.Contains($"gestureright={gestureValue}") ||
-                        statePathLower.Contains($"gesture_right{gestureValue}") ||
-                        statePathLower.Contains($"right{gestureValue}"))
-                    {
-                        isMatch = true;
-                    }
-                }
-                
-                // 現在のパラメータフィルタと一致するか確認
-                if (isMatch && (string.IsNullOrEmpty(selectedParameter) || IsStateMatchingCurrentFilter(statePathLower)))
-                {
-                    return statePath;
-                }
-            }
-            
-            // サブステートマシンの検索
-            foreach (var childStateMachine in stateMachine.stateMachines)
-            {
-                string subPath = $"{path}/{childStateMachine.stateMachine.name}";
-                string foundPath = SearchStateMachineForGesture(childStateMachine.stateMachine, subPath, gestureType, gestureValue);
-                if (!string.IsNullOrEmpty(foundPath))
-                    return foundPath;
             }
             
             return null;
@@ -871,8 +867,16 @@ if (createLayer)
                         
                     if (driverType == null)
                     {
-                        EditorUtility.DisplayDialog("エラー", "VRCAvatarParameterDriverが見つかりませんでした。VRChat SDKがインポートされているか確認してください。", "OK");
-                        return;
+                        // ModularAvatarのParameterSyncStepも試す
+                        driverType = AppDomain.CurrentDomain.GetAssemblies()
+                            .SelectMany(a => a.GetTypes())
+                            .FirstOrDefault(t => t.FullName == ModularAvatarDriverTypeName || t.Name == "ParameterSyncStep");
+                            
+                        if (driverType == null)
+                        {
+                            EditorUtility.DisplayDialog("エラー", "VRCAvatarParameterDriverとModularAvatarのParameterSyncStepが見つかりませんでした。VRChat SDKまたはModularAvatarがインポートされているか確認してください。", "OK");
+                            return;
+                        }
                     }
                     
                     driver = state.AddStateMachineBehaviour(driverType);
@@ -884,8 +888,8 @@ if (createLayer)
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogError($"VRCAvatarParameterDriverの追加中にエラーが発生しました: {ex.Message}");
-                    EditorUtility.DisplayDialog("エラー", $"VRCAvatarParameterDriverの追加中にエラーが発生しました: {ex.Message}", "OK");
+                    Debug.LogError($"パラメータドライバーの追加中にエラーが発生しました: {ex.Message}");
+                    EditorUtility.DisplayDialog("エラー", $"パラメータドライバーの追加中にエラーが発生しました: {ex.Message}", "OK");
                     return;
                 }
             }
@@ -893,7 +897,14 @@ if (createLayer)
             if (driver != null)
             {
                 var serializedObj = new SerializedObject(driver);
+                
+                // パラメータプロパティを検索（VRChatとModularAvatarの両方をチェック）
                 var parametersProp = serializedObj.FindProperty("parameters");
+                
+                if (parametersProp == null)
+                {
+                    parametersProp = serializedObj.FindProperty("parameterDrivers");
+                }
                 
                 if (parametersProp == null)
                 {
@@ -929,11 +940,19 @@ if (createLayer)
                     
                     var nameProp = newParamProp.FindPropertyRelative("name");
                     var valueProp = newParamProp.FindPropertyRelative("value");
+                    var typeProp = newParamProp.FindPropertyRelative("type");
                     
                     if (nameProp != null && valueProp != null)
                     {
                         nameProp.stringValue = parameterName;
                         valueProp.floatValue = value;
+                        
+                        // タイプがある場合はセット
+                        if (typeProp != null)
+                        {
+                            // 0 = Set (VRCSDKの場合)
+                            typeProp.intValue = 0;
+                        }
                     }
                 }
                 
@@ -998,6 +1017,12 @@ if (createLayer)
             if (controllerClips.Count == 0)
             {
                 EditorGUILayout.HelpBox("アニメーターコントローラからアニメーションが見つかりませんでした。", MessageType.Info);
+                
+                if (GUILayout.Button("アニメーションを検索", GUILayout.Height(30)))
+                {
+                    FindAnimationsInController();
+                }
+                
                 EditorGUILayout.EndVertical();
                 return;
             }
@@ -1027,6 +1052,32 @@ if (createLayer)
             }
             
             EditorGUILayout.EndVertical();
+        }
+        
+        private void FindAnimationsInController()
+        {
+            controllerClips.Clear();
+            animationReplacementMap.Clear();
+            
+            foreach (var layer in targetController.layers)
+            {
+                if (layer.stateMachine != null)
+                {
+                    CollectAnimationClips(layer.stateMachine);
+                }
+            }
+            
+            // 重複を削除してソート
+            controllerClips = controllerClips.Distinct().OrderBy(c => c.name).ToList();
+            
+            if (controllerClips.Count == 0)
+            {
+                EditorUtility.DisplayDialog("検索結果", "アニメーションクリップが見つかりませんでした。", "OK");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("検索完了", $"{controllerClips.Count}個のアニメーションクリップを見つけました。", "OK");
+            }
         }
         
         private void DrawAnimationReplaceRow(AnimationClip controllerClip)
@@ -1303,6 +1354,23 @@ if (createLayer)
             
             EditorGUILayout.Space(10);
             
+            // 表示設定
+            EditorGUILayout.LabelField("表示設定", EditorStyles.boldLabel);
+            DrawThinSeparator();
+            
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            
+            showNeutralGesture = EditorGUILayout.Toggle("ニュートラル表情を表示", showNeutralGesture);
+            
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("表示領域の高さ:", GUILayout.Width(100));
+            gestureDisplayHeight = EditorGUILayout.Slider(gestureDisplayHeight, 300f, 1000f);
+            EditorGUILayout.EndHorizontal();
+            
+            EditorGUILayout.EndVertical();
+            
+            EditorGUILayout.Space(10);
+            
             // 使い方
             EditorGUILayout.LabelField("ツールの使い方", EditorStyles.boldLabel);
             DrawThinSeparator();
@@ -1312,11 +1380,12 @@ if (createLayer)
             EditorGUILayout.HelpBox(
                 "このツールの使い方:\n\n" +
                 "1. アニメーターコントローラを選択またはドラッグ＆ドロップします\n" +
-                "2. パラメータと値を選択して表示するステートを絞り込みます\n" +
-                "3. 各ジェスチャーのパラメータを切り替えます\n" +
+                "2. レイヤーとパラメータを選択して表示するステートを絞り込みます\n" +
+                "  （パラメータは「なし」でも動作します）\n" +
+                "3. 各ジェスチャーのパラメータをON/OFFで切り替えます\n" +
                 "4. 「変更を保存」ボタンで変更を保存します\n\n" +
                 "アニメーション置換タブでは、コントローラ内のアニメーションを置き換えることができます。\n" +
-                "設定タブでは、コントローラの複製ができます。",
+                "設定タブでは、コントローラの複製や表示オプションが変更できます。",
                 MessageType.Info);
             
             EditorGUILayout.EndVertical();
@@ -1476,9 +1545,13 @@ if (createLayer)
             if (targetController == null)
                 return;
 
+            // まず状態をクリア
             gestureParameterMap.Clear();
             gestureParameterMap["GestureLeft"] = new List<ParameterDriverState>();
             gestureParameterMap["GestureRight"] = new List<ParameterDriverState>();
+            
+            // レイヤー名リストの更新
+            layerNames = targetController.layers.Select(l => l.name).ToArray();
             
             // パラメータリストの更新
             availableParameters.Clear();
@@ -1494,31 +1567,105 @@ if (createLayer)
                 }
             }
             
-            // F_setもしくは類似のパラメータの検出
+            // コントロールパラメータを並び替え
+            List<string> sortedParameters = new List<string>();
+            
+            // F_Setなどのコントロールパラメータを優先的に表示
             var controlParams = availableParameters.Where(p => 
                 p.StartsWith("F_") || p.EndsWith("_set") || p.Contains("Set") || p.Contains("set")).ToList();
+                
+            sortedParameters.AddRange(controlParams);
             
-            if (controlParams.Count > 0)
-            {
-                if (string.IsNullOrEmpty(selectedParameter) || !controlParams.Contains(selectedParameter))
-                {
-                    selectedParameter = controlParams[0];
-                }
-            }
-            else if (availableParameters.Count > 0)
-            {
-                selectedParameter = availableParameters[0];
-            }
+            // その他のパラメータを追加
+            var otherParams = availableParameters.Except(controlParams).ToList();
+            sortedParameters.AddRange(otherParams);
+            
+            availableParameters = sortedParameters;
             
             // フィルタ値の設定
             UpdateParameterValueOptions();
 
-            // コントローラ内のすべてのステートを検索
+            // まずすべてのレイヤーでトランジション条件からステートを検出
             foreach (var layer in targetController.layers)
             {
                 if (layer.stateMachine != null)
                 {
-                    AnalyzeStateMachine(layer.stateMachine, layer.name);
+                    // 選択されたレイヤーのみフィルタリング
+                    if (selectedLayerIndex >= 0 && Array.IndexOf(targetController.layers, layer) != selectedLayerIndex)
+                    {
+                        continue;
+                    }
+                    
+                    // 左右の手のジェスチャー検出
+                    ExtensiveSearchForGestureTransitions(layer.stateMachine, layer.name, "GestureLeft");
+                    ExtensiveSearchForGestureTransitions(layer.stateMachine, layer.name, "GestureRight");
+                }
+            }
+            
+            // フィルタリングを適用（選択されたパラメータと値に基づく）
+            if (!string.IsNullOrEmpty(selectedParameter) && selectedValues.Count > 0 && currentValueIndex < selectedValues.Count)
+            {
+                int selectedValue = selectedValues[currentValueIndex];
+                string paramLower = selectedParameter.ToLower();
+                
+                // 式パスのチェック用パターン
+                string[] patterns = new string[]
+                {
+                    $"{paramLower}{selectedValue}",
+                    $"{paramLower}={selectedValue}",
+                    $"{paramLower}.{selectedValue}",
+                    $"{paramLower}_{selectedValue}"
+                };
+                
+                // 式条件のチェック用関数
+                Func<string, bool> pathMatches = (string path) => {
+                    string pathLower = path.ToLower();
+                    foreach (var pattern in patterns)
+                    {
+                        if (pathLower.Contains(pattern))
+                            return true;
+                    }
+                    return false;
+                };
+                
+                // 左手のフィルタリング
+                if (gestureParameterMap["GestureLeft"].Count > 0)
+                {
+                    var filteredLeft = new List<ParameterDriverState>();
+                    foreach (var state in gestureParameterMap["GestureLeft"])
+                    {
+                        // コントロールパラメータが「なし」の場合はフィルタリングしない
+                        if (string.IsNullOrEmpty(selectedParameter) || pathMatches(state.statePath))
+                        {
+                            filteredLeft.Add(state);
+                        }
+                    }
+                    
+                    // フィルタリング結果が空の場合は元のリストを使用
+                    if (filteredLeft.Count > 0)
+                    {
+                        gestureParameterMap["GestureLeft"] = filteredLeft;
+                    }
+                }
+                
+                // 右手のフィルタリング
+                if (gestureParameterMap["GestureRight"].Count > 0)
+                {
+                    var filteredRight = new List<ParameterDriverState>();
+                    foreach (var state in gestureParameterMap["GestureRight"])
+                    {
+                        // コントロールパラメータが「なし」の場合はフィルタリングしない
+                        if (string.IsNullOrEmpty(selectedParameter) || pathMatches(state.statePath))
+                        {
+                            filteredRight.Add(state);
+                        }
+                    }
+                    
+                    // フィルタリング結果が空の場合は元のリストを使用
+                    if (filteredRight.Count > 0)
+                    {
+                        gestureParameterMap["GestureRight"] = filteredRight;
+                    }
                 }
             }
             
@@ -1551,6 +1698,7 @@ if (createLayer)
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             
             sb.AppendLine($"コントローラ: {(targetController ? targetController.name : "なし")}");
+            sb.AppendLine($"レイヤー: {(selectedLayerIndex >= 0 && selectedLayerIndex < layerNames.Length ? layerNames[selectedLayerIndex] : "すべて")}");
             sb.AppendLine($"パラメータ数: {availableParameters.Count}");
             if (availableParameters.Count > 0)
             {
@@ -1561,7 +1709,8 @@ if (createLayer)
                 }
             }
             
-            sb.AppendLine($"選択パラメータ: {selectedParameter}, 値: {(currentValueIndex < selectedValues.Length ? selectedValues[currentValueIndex] : -1)}");
+            sb.AppendLine($"選択パラメータ: {(string.IsNullOrEmpty(selectedParameter) ? "なし" : selectedParameter)}, " +
+                           $"値: {(selectedValues.Count > 0 && currentValueIndex < selectedValues.Count ? selectedValues[currentValueIndex] : -1)}");
             
             sb.AppendLine($"GestureLeft パラメータ: {gestureParameterMap["GestureLeft"].Count}件");
             sb.AppendLine($"GestureRight パラメータ: {gestureParameterMap["GestureRight"].Count}件");
@@ -1583,24 +1732,101 @@ if (createLayer)
         
         private void UpdateParameterValueOptions()
         {
-            // 選択中のパラメータに基づいて値の選択肢を更新
-            if (selectedParameter.StartsWith("F_set") || selectedParameter.StartsWith("F_Set"))
+            // 選択パラメータに基づいて値の選択肢を更新
+            selectedValues.Clear();
+            valueLabels.Clear();
+            
+            if (string.IsNullOrEmpty(selectedParameter))
             {
-                // F_setの場合は0-3までの値
-                valueLabels = new string[] { "値=0", "値=1", "値=2", "値=3" };
-                selectedValues = new int[] { 0, 1, 2, 3 };
+                // パラメータが選択されていない場合はデフォルト値
+                selectedValues.Add(0);
+                valueLabels.Add("値=0");
+                currentValueIndex = 0;
+                return;
+            }
+            
+            // 実際に使用されている値を検索
+            HashSet<int> usedValues = new HashSet<int>();
+            
+            // F_Setなどのコントロールパラメータの場合
+            if (selectedParameter.StartsWith("F_") || selectedParameter.EndsWith("_set") || 
+                selectedParameter.Contains("Set") || selectedParameter.Contains("set"))
+            {
+                // アニメーターの全レイヤーをチェック
+                foreach (var layer in targetController.layers)
+                {
+                    if (layer.stateMachine != null)
+                    {
+                        // ステートマシン内のトランジション条件をチェック
+                        CollectUsedParameterValues(layer.stateMachine, layer.name, selectedParameter, usedValues);
+                    }
+                }
+                
+                // 値が見つからなかった場合はデフォルト値を使用
+                if (usedValues.Count == 0)
+                {
+                    usedValues.Add(0);
+                    usedValues.Add(1);
+                }
             }
             else
             {
-                // それ以外の場合はON/OFFとして扱う
-                valueLabels = new string[] { "値=0", "値=1" };
-                selectedValues = new int[] { 0, 1 };
+                // その他のパラメータはON/OFFとして扱う
+                usedValues.Add(0);
+                usedValues.Add(1);
+            }
+            
+            // 値の選択肢を作成（ソートして表示）
+            var sortedValues = usedValues.ToList();
+            sortedValues.Sort();
+            
+            foreach (int value in sortedValues)
+            {
+                selectedValues.Add(value);
+                valueLabels.Add($"値={value}");
             }
             
             // インデックスの修正
-            if (currentValueIndex >= valueLabels.Length)
+            if (currentValueIndex >= valueLabels.Count)
             {
                 currentValueIndex = 0;
+            }
+        }
+        
+        private void CollectUsedParameterValues(AnimatorStateMachine stateMachine, string path, string paramName, HashSet<int> usedValues)
+        {
+            // AnyStateトランジションをチェック
+            foreach (var transition in stateMachine.anyStateTransitions)
+            {
+                foreach (var condition in transition.conditions)
+                {
+                    if (condition.parameter == paramName)
+                    {
+                        usedValues.Add(Mathf.RoundToInt(condition.threshold));
+                    }
+                }
+            }
+            
+            // 通常のステートトランジションをチェック
+            foreach (var childState in stateMachine.states)
+            {
+                foreach (var transition in childState.state.transitions)
+                {
+                    foreach (var condition in transition.conditions)
+                    {
+                        if (condition.parameter == paramName)
+                        {
+                            usedValues.Add(Mathf.RoundToInt(condition.threshold));
+                        }
+                    }
+                }
+            }
+            
+            // サブステートマシンを探索
+            foreach (var childStateMachine in stateMachine.stateMachines)
+            {
+                string subPath = $"{path}/{childStateMachine.stateMachine.name}";
+                CollectUsedParameterValues(childStateMachine.stateMachine, subPath, paramName, usedValues);
             }
         }
         
@@ -1641,201 +1867,20 @@ if (createLayer)
             }
         }
 
-        private void AnalyzeStateMachine(AnimatorStateMachine stateMachine, string path)
-        {
-            // 各ステートの解析
-            foreach (var childState in stateMachine.states)
-            {
-                string statePath = $"{path}/{childState.state.name}";
-                AnalyzeState(childState.state, statePath);
-            }
-
-            // サブステートマシンの解析
-            foreach (var childStateMachine in stateMachine.stateMachines)
-            {
-                string subPath = $"{path}/{childStateMachine.stateMachine.name}";
-                AnalyzeStateMachine(childStateMachine.stateMachine, subPath);
-            }
-        }
-
-        private void AnalyzeState(AnimatorState state, string statePath)
-        {
-            // 左手または右手のジェスチャーステートか確認
-            GestureStateInfo gestureInfo = GetGestureInfoFromPath(statePath);
-            if (gestureInfo == null)
-                return;
-                
-            // 現在のフィルタ条件に合うステートか確認
-            if (!string.IsNullOrEmpty(selectedParameter) && !IsStateMatchingCurrentFilter(statePath.ToLower()))
-                return;
-
-            // VRC Avatar Parameter Driverの解析
-            foreach (var behaviour in state.behaviours)
-            {
-                if (behaviour == null)
-                    continue;
-
-                string typeName = behaviour.GetType().FullName;
-                
-                if (typeName == VRCParameterDriverTypeName || 
-                    typeName.EndsWith("VRCAvatarParameterDriver") ||
-                    typeName == ModularAvatarDriverTypeName || 
-                    typeName.EndsWith("ParameterSyncStep"))
-                {
-                    var parameters = GetParametersFromDriver(behaviour);
-                    
-                    foreach (var paramState in parameters)
-                    {
-                        paramState.statePath = statePath;
-                        paramState.gestureType = gestureInfo.gestureType;
-                        paramState.gestureValue = gestureInfo.gestureValue;
-                        paramState.behaviour = behaviour;
-                        
-                        gestureParameterMap[gestureInfo.gestureType].Add(paramState);
-                    }
-                }
-            }
-        }
-
-        private GestureStateInfo GetGestureInfoFromPath(string statePath)
-        {
-            string path = statePath.ToLower();
-            
-            // 左手ジェスチャー
-            if (path.Contains("gestureleft") || path.Contains("gesture_left") || 
-                path.Contains("left_gesture") ||
-                path.Contains("fist_l") || path.Contains("open_l") || path.Contains("point_l") || 
-                path.Contains("peace_l") || path.Contains("rocknroll_l") || path.Contains("gun_l") || 
-                path.Contains("thumbsup_l"))
-            {
-                for (int i = 0; i < 8; i++)
-                {
-                    if (path.Contains($"gestureleft{i}") || 
-                        path.Contains($"gestureleft.{i}") || 
-                        path.Contains($"gestureleft={i}") ||
-                        path.Contains($"gesture_left{i}") ||
-                        path.Contains($"gesture_left.{i}") ||
-                        path.Contains($"gesture_left={i}") ||
-                        path.Contains($"left_gesture{i}") ||
-                        path.Contains($"left_gesture.{i}") ||
-                        path.Contains($"left_gesture={i}") ||
-                        (path.Contains($"fist_l") && i == 1) ||
-                        (path.Contains($"open_l") && i == 4) ||
-                        (path.Contains($"point_l") && i == 2) ||
-                        (path.Contains($"peace_l") && i == 3) ||
-                        (path.Contains($"rocknroll_l") && i == 5) ||
-                        (path.Contains($"gun_l") && i == 7) ||
-                        (path.Contains($"thumbsup_l") && i == 6))
-                    {
-                        return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = i };
-                    }
-                }
-                
-                // デフォルト値
-                if (path.Contains("fist_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 1 };
-                else if (path.Contains("point_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 2 };
-                else if (path.Contains("peace_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 3 };
-                else if (path.Contains("open_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 4 };
-                else if (path.Contains("rocknroll_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 5 };
-                else if (path.Contains("thumbsup_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 6 };
-                else if (path.Contains("gun_l"))
-                    return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 7 };
-                
-                // ジェスチャー名だけしかない場合はニュートラルとして扱う
-                return new GestureStateInfo { gestureType = "GestureLeft", gestureValue = 0 };
-            }
-            
-            // 右手ジェスチャー
-            if (path.Contains("gestureright") || path.Contains("gesture_right") || 
-                path.Contains("right_gesture") ||
-                path.Contains("fist_r") || path.Contains("open_r") || path.Contains("point_r") || 
-                path.Contains("peace_r") || path.Contains("rocknroll_r") || path.Contains("gun_r") || 
-                path.Contains("thumbsup_r"))
-            {
-                for (int i = 0; i < 8; i++)
-                {
-                    if (path.Contains($"gestureright{i}") || 
-                        path.Contains($"gestureright.{i}") || 
-                        path.Contains($"gestureright={i}") ||
-                        path.Contains($"gesture_right{i}") ||
-                        path.Contains($"gesture_right.{i}") ||
-                        path.Contains($"gesture_right={i}") ||
-                        path.Contains($"right_gesture{i}") ||
-                        path.Contains($"right_gesture.{i}") ||
-                        path.Contains($"right_gesture={i}") ||
-                        (path.Contains($"fist_r") && i == 1) ||
-                        (path.Contains($"open_r") && i == 4) ||
-                        (path.Contains($"point_r") && i == 2) ||
-                        (path.Contains($"peace_r") && i == 3) ||
-                        (path.Contains($"rocknroll_r") && i == 5) ||
-                        (path.Contains($"gun_r") && i == 7) ||
-                        (path.Contains($"thumbsup_r") && i == 6))
-                    {
-                        return new GestureStateInfo { gestureType = "GestureRight", gestureValue = i };
-                    }
-                }
-                
-                // デフォルト値
-                if (path.Contains("fist_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 1 };
-                else if (path.Contains("point_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 2 };
-                else if (path.Contains("peace_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 3 };
-                else if (path.Contains("open_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 4 };
-                else if (path.Contains("rocknroll_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 5 };
-                else if (path.Contains("thumbsup_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 6 };
-                else if (path.Contains("gun_r"))
-                    return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 7 };
-                
-                // ジェスチャー名だけしかない場合はニュートラルとして扱う
-                return new GestureStateInfo { gestureType = "GestureRight", gestureValue = 0 };
-            }
-            
-            return null;
-        }
-
-        private bool IsStateMatchingCurrentFilter(string statePathLower)
-        {
-            // 現在選択中のパラメータと値に基づいてフィルタリング
-            if (string.IsNullOrEmpty(selectedParameter))
-                return true;
-                
-            int selectedValue = selectedValues[currentValueIndex];
-            
-            // F_setパラメータの場合
-            if (selectedParameter.StartsWith("F_set") || selectedParameter.StartsWith("F_Set"))
-            {
-                string valueStr = selectedValue.ToString();
-                string paramLower = selectedParameter.ToLower();
-                
-                return statePathLower.Contains($"{paramLower}{valueStr}") || 
-                       statePathLower.Contains($"{paramLower}={valueStr}") ||
-                       statePathLower.Contains($"{paramLower}.{valueStr}") ||
-                       statePathLower.Contains($"f_set{valueStr}") ||
-                       statePathLower.Contains($"f_set={valueStr}") ||
-                       statePathLower.Contains($"f_set.{valueStr}");
-            }
-            
-            // その他のパラメータの場合
-            return statePathLower.Contains(selectedParameter.ToLower());
-        }
-
         private List<ParameterDriverState> GetParametersFromDriver(StateMachineBehaviour driver)
         {
             var result = new List<ParameterDriverState>();
             
             var serializedDriver = new SerializedObject(driver);
+            
+            // VRChatとModularAvatarで異なるプロパティ名をチェック
             var parametersProp = serializedDriver.FindProperty("parameters");
+            
+            if (parametersProp == null)
+            {
+                // ModularAvatarの場合は別のプロパティ名
+                parametersProp = serializedDriver.FindProperty("parameterDrivers");
+            }
             
             if (parametersProp != null && parametersProp.isArray)
             {
@@ -1867,7 +1912,14 @@ if (createLayer)
                 return;
 
             var serializedObj = new SerializedObject(paramState.behaviour);
+            
+            // パラメータプロパティを検索（VRChatとModularAvatarの両方をチェック）
             var parametersProp = serializedObj.FindProperty("parameters");
+            
+            if (parametersProp == null)
+            {
+                parametersProp = serializedObj.FindProperty("parameterDrivers");
+            }
             
             if (parametersProp != null && parametersProp.isArray && paramState.propertyIndex < parametersProp.arraySize)
             {
