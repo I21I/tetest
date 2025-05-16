@@ -576,36 +576,36 @@ namespace VRCFaceController
             }
             
             // それでも見つからない場合は、ユーザーに選択させる
-            string layerName = EditorUtility.DisplayDialog("レイヤー選択", 
-                $"{gestureType} {gestureValue}のステートが見つかりません。" +
-                "新しいレイヤーを作成しますか？", "はい", "いいえ");
-                
-            if (layerName == "はい")
-            {
-                // 新しいレイヤーを作成
-                AnimatorControllerLayer newLayer = new AnimatorControllerLayer
-                {
-                    name = $"{gestureType}Layer",
-                    stateMachine = new AnimatorStateMachine(),
-                    defaultWeight = 1.0f
-                };
-                
-                // ステートマシンをアセットとして保存
-                string controllerPath = AssetDatabase.GetAssetPath(targetController);
-                string folderPath = Path.GetDirectoryName(controllerPath);
-                AssetDatabase.CreateAsset(newLayer.stateMachine, $"{folderPath}/{gestureType}StateMachine.asset");
-                
-                // レイヤーを追加
-                List<AnimatorControllerLayer> layers = new List<AnimatorControllerLayer>(targetController.layers);
-                layers.Add(newLayer);
-                targetController.layers = layers.ToArray();
-                
-                // ステートを作成
-                AnimatorState newState = newLayer.stateMachine.AddState($"{gestureType}{gestureValue}");
-                
-                // パスを返す
-                return $"{newLayer.name}/{newState.name}";
-            }
+bool createLayer = EditorUtility.DisplayDialog("レイヤー選択", 
+    $"{gestureType} {gestureValue}のステートが見つかりません。" +
+    "新しいレイヤーを作成しますか？", "はい", "いいえ");
+
+if (createLayer)
+{
+    // 新しいレイヤーを作成
+    AnimatorControllerLayer newLayer = new AnimatorControllerLayer
+    {
+        name = $"{gestureType}Layer",
+        stateMachine = new AnimatorStateMachine(),
+        defaultWeight = 1.0f
+    };
+
+    // ステートマシンをアセットとして保存
+    string controllerPath = AssetDatabase.GetAssetPath(targetController);
+    string folderPath = Path.GetDirectoryName(controllerPath);
+    AssetDatabase.CreateAsset(newLayer.stateMachine, $"{folderPath}/{gestureType}StateMachine.asset");
+
+    // レイヤーを追加
+    List<AnimatorControllerLayer> layers = new List<AnimatorControllerLayer>(targetController.layers);
+    layers.Add(newLayer);
+    targetController.layers = layers.ToArray();
+
+    // ステートを作成
+    AnimatorState newState = newLayer.stateMachine.AddState($"{gestureType}{gestureValue}");
+
+    // パスを返す
+    return $"{newLayer.name}/{newState.name}";
+}
             
             return null;
         }
